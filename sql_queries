@@ -1,0 +1,106 @@
+-- Creating a table in redshift to copy our data from s3 bucket
+
+create table shopping_data(
+    customer_id int IDENTITY(1,1) NOT NULL PRIMARY KEY,
+    age int,
+    gender VARCHAR(15),
+    category varchar(50),
+    location VARCHAR(50),
+    season VARCHAR(50),
+    review_rating REAL,
+    subscription_status VARCHAR(50),
+    payment_method VARCHAR(50),
+    shipping_type VARCHAR(50),
+    discount_applied VARCHAR(50),
+    promo_code_used VARCHAR(50),
+    previous_purchases int,
+    preffered_payment_method VARCHAR(50),
+    frequency_of_purchases VARCHAR(50)
+);
+
+-- copying the data from s3 to redshift
+
+copy shopping_data from 's3://myluxdevbucket/shopping (1).csv' IAM_ROLE 'arn:aws:iam::079892728038:role/service-role/AmazonRedshift-CommandsAccessRole-20250324T204503' delimiter ',' ignoreheader 1
+
+-- steps to make our data warehouse
+
+-- 1. Define Our business problem .what is the most used frequency of purchase per each season
+-- 2. Identify grain. Our grain will be frequency of Purchase and season
+-- 3. Identify dimension. Our dimesion will be frequency of purchase and season
+-- 4. Identify fact. Fact in this case will be count of frequency of purchase
+
+ --  creating our dimension TABLE
+
+ create table dim_frequency(
+    id int,
+    frequency_of_purchase varchar(50)
+ );
+
+ insert into dim_frequency(id, frequency_of_purchase)
+ select customer_id, frequency_of_purchases from shopping_data;
+
+ -- creating our season dimension table
+ create table dim_season(
+    id int,
+    season varchar(50)
+ );
+
+ insert into dim_season(id, season)
+ select customer_id, season from shopping_data;
+
+ -- solving our business problem
+ -- creating a central table to help query data for us to analyse
+ create temp table analysis as 
+ select ds.id, ds.season, df.frequency_of_purchase
+ from dim_season ds
+ left join dim_frequency df on df.id = ds.id;
+
+select * from analysis;
+
+with analysis_cte as (
+SELECT season, frequency_of_purchase, RANK() OVER (PARTITION BY season ORDER BY COUNT(*) DESC) AS rnk
+FROM analysis
+GROUP BY season, frequency_of_purchase)
+
+SELECT season, frequency_of_purchase 
+FROM analysis_cte
+WHERE rnk = 1;
+
+--  products with high review rating
+
+-- 1. Define Our business problem .what are the products with high review rating
+-- 2. Identify grain. Our grain will be category
+-- 3. Identify dimension. Our dimesion will be category
+-- 4. Identify fact. Fact in this case will be review rating
+
+select * from shopping_data;
+
+-- creating a table to help with our analysis
+create table high_review_rating(
+   id int,
+   category varchar(50),
+   review_rating REAl
+);
+
+insert into high_review_rating(id, category, review_rating)
+select customer_id, category, review_rating from shopping_data;
+
+
+-- creating our dimension TABLE
+
+create table dim_category(
+   id int,
+   category VARCHAR(50)
+
+);
+
+insert into dim_category(id, category)
+select id, category from high_review_rating;
+
+-- solving our business problem
+
+select category, round(avg(review_rating),1) as average_rating
+from high_review_rating
+group by category
+order by average_rating desc;
+
